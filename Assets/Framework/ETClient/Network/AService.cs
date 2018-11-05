@@ -35,6 +35,8 @@ namespace Model
 
         public abstract AChannel ConnectChannel(IPEndPoint ipEndPoint);
 
+        public abstract AChannel ConnectChannel(string address);
+
         public virtual void Dispose() { }
 
         public abstract void Remove(long channelId);

@@ -4,11 +4,14 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Tasks;
+using Microsoft.IO;
 
 namespace Model
 {
-	public sealed class TChannel : AChannel
+    /// <summary>
+    /// 封装Socket,将回调push到主线程处理
+    /// </summary>
+    public sealed class TChannel : AChannel
     {
         private Socket socket;
         private SocketAsyncEventArgs innArgs = new SocketAsyncEventArgs();
@@ -17,17 +20,25 @@ namespace Model
         private readonly CircularBuffer recvBuffer = new CircularBuffer();
         private readonly CircularBuffer sendBuffer = new CircularBuffer();
 
+        private readonly MemoryStream memoryStream;
+
         private bool isSending;
+
+        private bool isRecving;
 
         private bool isConnected;
 
-        public readonly PacketParser parser;
+        private readonly PacketParser parser;
+
+        private readonly byte[] cache = new byte[Packet.SizeLength];
 
         public TChannel(IPEndPoint ipEndPoint, TService service) : base(service, ChannelType.Connect)
         {
+            this.memoryStream = this.GetService().MemoryStreamManager.GetStream("message", ushort.MaxValue);
+
             this.socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             this.socket.NoDelay = true;
-            this.parser = new PacketParser(this.recvBuffer);
+            this.parser = new PacketParser(this.recvBuffer, this.memoryStream);
             this.innArgs.Completed += this.OnComplete;
             this.outArgs.Completed += this.OnComplete;
 
@@ -39,9 +50,11 @@ namespace Model
 
         public TChannel(Socket socket, TService service) : base(service, ChannelType.Accept)
         {
+            this.memoryStream = this.GetService().MemoryStreamManager.GetStream("message", ushort.MaxValue);
+
             this.socket = socket;
             this.socket.NoDelay = true;
-            this.parser = new PacketParser(this.recvBuffer);
+            this.parser = new PacketParser(this.recvBuffer, this.memoryStream);
             this.innArgs.Completed += this.OnComplete;
             this.outArgs.Completed += this.OnComplete;
 
@@ -51,7 +64,7 @@ namespace Model
             this.isSending = false;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             if (this.IsDisposed)
             {
@@ -66,13 +79,19 @@ namespace Model
             this.innArgs = null;
             this.outArgs = null;
             this.socket = null;
+            this.memoryStream.Dispose();
+        }
+
+        private TService GetService()
+        {
+            return (TService)this.service;
         }
 
         public override MemoryStream Stream
         {
             get
             {
-                return this.parser.packet.Stream;
+                return this.memoryStream;
             }
         }
 
@@ -84,24 +103,13 @@ namespace Model
                 return;
             }
 
-            this.StartRecv();
-            this.StartSend();
-        }
-
-        public override void Send(byte[] buffer, int index, int length)
-        {
-            if (this.IsDisposed)
+            if (!this.isRecving)
             {
-                throw new Exception("TChannel已经被Dispose, 不能发送消息");
+                this.isRecving = true;
+                this.StartRecv();
             }
-            byte[] sizeBuffer = BitConverter.GetBytes(length);
-            this.sendBuffer.Write(sizeBuffer, 0, sizeBuffer.Length);
-            this.sendBuffer.Write(buffer, index, length);
 
-            if (!this.isSending)
-            {
-                this.StartSend();
-            }
+            this.GetService().MarkNeedStartSend(this.Id);
         }
 
         public override void Send(MemoryStream stream)
@@ -111,15 +119,22 @@ namespace Model
                 throw new Exception("TChannel已经被Dispose, 不能发送消息");
             }
 
-            ushort size = (ushort)(stream.Length - stream.Position);
-            byte[] sizeBuffer = BitConverter.GetBytes(size);
-            this.sendBuffer.Write(sizeBuffer, 0, sizeBuffer.Length);
-            this.sendBuffer.ReadFrom(stream);
-
-            if (!this.isSending)
+            switch (Packet.SizeLength)
             {
-                this.StartSend();
+                case 4:
+                    this.cache.WriteTo(0, (int)stream.Length);
+                    break;
+                case 2:
+                    this.cache.WriteTo(0, (ushort)stream.Length);
+                    break;
+                default:
+                    throw new Exception("packet size must be 2 or 4!");
             }
+
+            this.sendBuffer.Write(this.cache, 0, this.cache.Length);
+            this.sendBuffer.Write(stream);
+
+            this.GetService().MarkNeedStartSend(this.Id);
         }
 
         private void OnComplete(object sender, SocketAsyncEventArgs e)
@@ -170,8 +185,7 @@ namespace Model
             e.RemoteEndPoint = null;
             this.isConnected = true;
 
-            this.StartRecv();
-            this.StartSend();
+            this.Start();
         }
 
         private void OnDisconnectComplete(object o)
@@ -220,7 +234,7 @@ namespace Model
 
             if (e.BytesTransferred == 0)
             {
-                this.OnError((int)e.SocketError);
+                this.OnError(ErrorCode.ERR_PeerDisconnect);
                 return;
             }
 
@@ -239,10 +253,10 @@ namespace Model
                     break;
                 }
 
-                Packet packet = this.parser.GetPacket();
+                MemoryStream stream = this.parser.GetPacket();
                 try
                 {
-                    this.OnRead(packet);
+                    this.OnRead(stream);
                 }
                 catch (Exception exception)
                 {
@@ -258,10 +272,19 @@ namespace Model
             this.StartRecv();
         }
 
-        private void StartSend()
+        public bool IsSending => this.isSending;
+
+        public void StartSend()
         {
             if (!this.isConnected)
             {
+                return;
+            }
+
+            // 没有数据需要发送
+            if (this.sendBuffer.Length == 0)
+            {
+                this.isSending = false;
                 return;
             }
 
@@ -306,18 +329,18 @@ namespace Model
                 this.OnError((int)e.SocketError);
                 return;
             }
+
+            if (e.BytesTransferred == 0)
+            {
+                this.OnError(ErrorCode.ERR_PeerDisconnect);
+                return;
+            }
+
             this.sendBuffer.FirstIndex += e.BytesTransferred;
             if (this.sendBuffer.FirstIndex == this.sendBuffer.ChunkSize)
             {
                 this.sendBuffer.FirstIndex = 0;
                 this.sendBuffer.RemoveFirst();
-            }
-
-            // 没有数据需要发送
-            if (this.sendBuffer.Length == 0)
-            {
-                this.isSending = false;
-                return;
             }
 
             this.StartSend();

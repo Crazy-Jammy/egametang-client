@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.IO;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -14,11 +15,17 @@ namespace Model
         private readonly SocketAsyncEventArgs innArgs = new SocketAsyncEventArgs();
         private Socket acceptor;
 
+
+        public RecyclableMemoryStreamManager MemoryStreamManager = new RecyclableMemoryStreamManager();
+        public HashSet<long> needStartSendChannel = new HashSet<long>();
+
         /// <summary>
         /// 即可做client也可做server
         /// </summary>
-        public TService(IPEndPoint ipEndPoint)
+        public TService(IPEndPoint ipEndPoint, Action<AChannel> acceptCallback)
         {
+            this.AcceptCallback += acceptCallback;
+
             this.acceptor = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             this.acceptor.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             this.innArgs.Completed += this.OnComplete;
@@ -31,7 +38,7 @@ namespace Model
         {
         }
 
-        public  void Dispose()
+        public override  void Dispose()
         {
             foreach (long id in this.idChannels.Keys.ToArray())
             {
@@ -113,12 +120,21 @@ namespace Model
             return channel;
         }
 
+        public override AChannel ConnectChannel(string address)
+        {
+            IPEndPoint ipEndPoint = NetworkHelper.ToIPEndPoint(address);
+            return this.ConnectChannel(ipEndPoint);
+        }
         public override AChannel ConnectChannel(IPEndPoint ipEndPoint)
         { 
             TChannel channel = new TChannel(ipEndPoint, this);
             this.idChannels[channel.Id] = channel;
 
             return channel;
+        }
+        public void MarkNeedStartSend(long id)
+        {
+            this.needStartSendChannel.Add(id);
         }
 
         public override void Remove(long id)
@@ -138,6 +154,29 @@ namespace Model
 
         public override void Update()
         {
+            foreach (long id in this.needStartSendChannel)
+            {
+                TChannel channel;
+                if (!this.idChannels.TryGetValue(id, out channel))
+                {
+                    continue;
+                }
+
+                if (channel.IsSending)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    channel.StartSend();
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e);
+                }
+            }
+            this.needStartSendChannel.Clear();
         }
     }
 }

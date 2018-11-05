@@ -15,7 +15,7 @@ namespace Test
         void Awake()
         {
             SynchronizationContext.SetSynchronizationContext(OneThreadSynchronizationContext.Instance);
-            NetworkClient.Instance.Initialize(NetworkProtocol.TCP);
+            NetworkClient.Instance.Initialize(NetworkProtocol.KCP);
             NetworkOpcodeType.Instance.Initialize();
         }
 
@@ -30,8 +30,8 @@ namespace Test
             Session session = null;
             try
             {
-                IPEndPoint connetEndPoint = NetworkHelper.ToIPEndPoint("127.0.0.1:10002");
-                session = NetworkClient.Instance.Create(connetEndPoint);
+                //IPEndPoint connetEndPoint = NetworkHelper.ToIPEndPoint();
+                session = NetworkClient.Instance.Create("127.0.0.1:10002");
 
                 R2C_Login r2CLogin = (R2C_Login) await session.Call(new C2R_Login() { Account = "Test1", Password = "111111" });
                 Debug.LogError($"R2C_Login: {r2CLogin.Address}");
@@ -39,8 +39,8 @@ namespace Test
                 if (string.IsNullOrEmpty(r2CLogin.Address))
                     return;
 
-                connetEndPoint = NetworkHelper.ToIPEndPoint(r2CLogin.Address);
-                gateSession = NetworkClient.Instance.Create(connetEndPoint);
+                //connetEndPoint = NetworkHelper.ToIPEndPoint(r2CLogin.Address);
+                gateSession = NetworkClient.Instance.Create(r2CLogin.Address);
                 G2C_LoginGate g2CLoginGate = (G2C_LoginGate)await gateSession.Call(new C2G_LoginGate() { Key = r2CLogin.Key });
 
                 Debug.LogError("登陆gate成功!");
@@ -60,6 +60,7 @@ namespace Test
         void Update()
         {
             OneThreadSynchronizationContext.Instance.Update();
+            NetworkClient.Instance.Update();
         }
     }
 }

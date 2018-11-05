@@ -3,9 +3,9 @@
 namespace Model
 {
 	public class ClientDispatcher: IMessageDispatcher
-	{
-		public void Dispatch(ASession session, ushort opcode, int offset, byte[] messageBytes, IMessage message)
-		{
+    {
+        public void Dispatch(Session session, ushort opcode, object message)
+        {
             // 如果是帧同步消息,交给ClientFrameComponent处理
             //FrameMessage frameMessage = message as FrameMessage;
             //if (frameMessage != null)
@@ -26,10 +26,5 @@ namespace Model
 
             UnityEngine.Debug.LogError("Recv Dispatch...");
 		}
-
-        public void Dispatch(Session session, Packet packet)
-        {
-            UnityEngine.Debug.LogError("Recv Dispatch Packet...");
-        }
     }
 }

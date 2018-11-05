@@ -49,9 +49,9 @@ namespace Model
             }
         }
 
-        private Action<Packet> readCallback;
+        private Action<MemoryStream> readCallback;
 
-        public event Action<Packet> ReadCallback
+        public event Action<MemoryStream> ReadCallback
         {
             add
             {
@@ -71,9 +71,9 @@ namespace Model
             }
         }
 
-        protected void OnRead(Packet packet)
+        protected void OnRead(MemoryStream memoryStream)
         {
-            this.readCallback.Invoke(packet);
+            this.readCallback.Invoke(memoryStream);
         }
 
         protected void OnError(int e)
@@ -94,11 +94,11 @@ namespace Model
         /// <summary>
         /// 发送消息
         /// </summary>
-        public abstract void Send(byte[] buffer, int index, int length);
+        //public abstract void Send(byte[] buffer, int index, int length);
 
         public abstract void Send(MemoryStream stream);
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             if (this.IsDisposed)
             {

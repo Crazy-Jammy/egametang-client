@@ -1,10 +1,7 @@
 ﻿namespace Model
 {
 	public interface IMessageDispatcher
-	{
-		void Dispatch(ASession session, ushort opcode, int offset, byte[] messageBytes, IMessage message);
-
-        void Dispatch(Session session, Packet packet);
-
+    {
+        void Dispatch(Session session, ushort opcode, object message);
     }
 }

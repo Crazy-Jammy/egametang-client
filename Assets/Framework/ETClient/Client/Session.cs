@@ -16,7 +16,7 @@ namespace Model
         private NetworkClient                       mNetwork;
 
         private readonly Dictionary<int, Action<IResponse>>     requestCallback = new Dictionary<int, Action<IResponse>>();
-        private readonly List<byte[]>                           byteses = new List<byte[]>() { new byte[1], new byte[0] };
+        private readonly List<byte[]> byteses = new List<byte[]>() { new byte[1], new byte[2] };
 
         public NetworkClient Network
         {
@@ -58,6 +58,10 @@ namespace Model
             };
             channel.ReadCallback += this.OnRead;
 
+            this.channel.Start();
+        }
+        public void Start()
+        {
             this.channel.Start();
         }
         public override void Dispose()
@@ -107,11 +111,11 @@ namespace Model
             }
         }
 
-        public void OnRead(Packet packet)
+        public void OnRead(MemoryStream memoryStream)
         {
             try
             {
-                this.Run(packet);
+                this.Run(memoryStream);
             }
             catch (Exception e)
             {
@@ -119,31 +123,40 @@ namespace Model
             }
         }
 
-        private void Run(Packet packet)
+        private void Run(MemoryStream memoryStream)
         {
-            byte flag = packet.Flag;
-            ushort opcode = packet.Opcode;
-            
-            // flag第一位为1表示这是rpc返回消息,否则交由MessageDispatcher分发
-            if ((flag & 0x01) == 0)
-            {
-                this.Network.MessageDispatcher.Dispatch(this, packet);
-                return;
-            }
+            memoryStream.Seek(Packet.MessageIndex, SeekOrigin.Begin);
+            byte flag = memoryStream.GetBuffer()[Packet.FlagIndex];
+            ushort opcode = BitConverter.ToUInt16(memoryStream.GetBuffer(), Packet.OpcodeIndex);
+
+//#if !SERVER
+//            if (OpcodeHelper.IsClientHotfixMessage(opcode))
+//            {
+//                this.GetComponent<SessionCallbackComponent>().MessageCallback.Invoke(this, flag, opcode, memoryStream);
+//                return;
+//            }
+//#endif
 
             object message;
             try
             {
                 Type instance = NetworkOpcodeType.Instance.GetType(opcode);
-                message = this.Network.MessagePacker.DeserializeFrom(instance, packet.Stream);
+                message = this.Network.MessagePacker.DeserializeFrom(instance, memoryStream);
                 //Log.Debug($"recv: {JsonHelper.ToJson(message)}");
             }
             catch (Exception e)
             {
                 // 出现任何消息解析异常都要断开Session，防止客户端伪造消息
                 Log.Error($"opcode: {opcode} {this.Network.Count} {e} ");
-                this.Error = ErrorCode.ERR_AccountOrPasswordError;
+                this.Error = ErrorCode.ERR_PacketParserError;
                 this.Network.Remove(this.Id);
+                return;
+            }
+            
+            // flag第一位为1表示这是rpc返回消息,否则交由MessageDispatcher分发
+            if ((flag & 0x01) == 0)
+            {
+                this.Network.MessageDispatcher.Dispatch(this, opcode, message);
                 return;
             }
 
@@ -171,6 +184,11 @@ namespace Model
             {
                 try
                 {
+                    if (ErrorCode.IsRpcNeedThrowException(response.Error))
+                    {
+                        throw new RpcException(response.Error, response.Message);
+                    }
+
                     tcs.SetResult(response);
                 }
                 catch (Exception e)
@@ -193,6 +211,11 @@ namespace Model
             {
                 try
                 {
+                    if (ErrorCode.IsRpcNeedThrowException(response.Error))
+                    {
+                        throw new RpcException(response.Error, response.Message);
+                    }
+
                     tcs.SetResult(response);
                 }
                 catch (Exception e)
@@ -213,11 +236,6 @@ namespace Model
             this.Send(0x00, message);
         }
 
-        public void Reply(IResponse message)
-        {
-            this.Send(0x01, message);
-        }
-
         public void Send(byte flag, IMessage message)
         {
             ushort opcode = NetworkOpcodeType.Instance.GetOpcode(message.GetType());
@@ -227,44 +245,57 @@ namespace Model
 
         public void Send(byte flag, ushort opcode, object message)
         {
-            this.byteses[0][0] = flag;
-            this.byteses[1] = BitConverter.GetBytes(opcode);
+			//if (this.IsDisposed)
+			//{
+			//	throw new Exception("session已经被Dispose了");
+			//}
+			
+//			if (OpcodeHelper.IsNeedDebugLogMessage(opcode) )
+//			{
+//#if !SERVER
+//				if (OpcodeHelper.IsClientHotfixMessage(opcode))
+//				{
+//				}
+//				else
+//#endif
+//				{
+//					Log.Msg(message);
+//				}
+//			}
 
-            MemoryStream stream = this.Stream;
+			MemoryStream stream = this.Stream;
+			
+			stream.Seek(Packet.MessageIndex, SeekOrigin.Begin);
+			stream.SetLength(Packet.MessageIndex);
+			this.Network.MessagePacker.SerializeTo(message, stream);
+			stream.Seek(0, SeekOrigin.Begin);
 
-            int index = Packet.Index;
-            stream.Seek(index, SeekOrigin.Begin);
-            stream.SetLength(index);
-            var bb = this.Network.MessagePacker.SerializeTo(message);
-            this.Network.MessagePacker.SerializeTo(message, stream);
-
-            stream.Seek(0, SeekOrigin.Begin);
-            index = 0;
-            foreach (var bytes in this.byteses)
-            {
-                Array.Copy(bytes, 0, stream.GetBuffer(), index, bytes.Length);
-                index += bytes.Length;
-            }
+			if (stream.Length > ushort.MaxValue)
+			{
+				Log.Error($"message too large: {stream.Length}, opcode: {opcode}");
+				return;
+			}
+			
+			this.byteses[0][0] = flag;
+			this.byteses[1].WriteTo(0, opcode);
+			int index = 0;
+			foreach (var bytes in this.byteses)
+			{
+				Array.Copy(bytes, 0, stream.GetBuffer(), index, bytes.Length);
+				index += bytes.Length;
+			}
 
 #if SERVER
 			// 如果是allserver，内部消息不走网络，直接转给session,方便调试时看到整体堆栈
 			if (this.Network.AppType == AppType.AllServer)
 			{
 				Session session = this.Network.Entity.GetComponent<NetInnerComponent>().Get(this.RemoteAddress);
-
-				Packet packet = ((TChannel)this.channel).parser.packet;
-
-				packet.Flag = flag;
-				packet.Opcode = opcode;
-				packet.Stream.Seek(0, SeekOrigin.Begin);
-				packet.Stream.SetLength(0);
-				this.Network.MessagePacker.SerializeTo(message, stream);
-				session.Run(packet);
+				session.Run(stream);
 				return;
 			}
 #endif
 
-            this.Send(stream);
+			this.Send(stream);
         }
 
         public void Send(MemoryStream stream)

@@ -7,7 +7,7 @@ using System.IO;
 
 namespace Model
 {
-    public class SerializerPacker : IMessagePacker
+    public class ProtobufPacker : IMessagePacker
     {
         public byte[] SerializeTo(object obj)
         {

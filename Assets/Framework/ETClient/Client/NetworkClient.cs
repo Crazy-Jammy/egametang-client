@@ -15,8 +15,6 @@ namespace Model
 
         private readonly Dictionary<long, Session> sessions = new Dictionary<long, Session>();
 
-        NetworkProtocol _Protocal;
-
         public IMessagePacker MessagePacker { get; set; }
 
         public IMessageDispatcher MessageDispatcher { get; set; }
@@ -28,9 +26,8 @@ namespace Model
 
         public void Initialize(NetworkProtocol protocol)
         {
-            _Protocal = protocol;
-            this.MessagePacker = new SerializerPacker();
-            this.MessageDispatcher = new ClientDispatcher();
+            MessagePacker = new ProtobufPacker();
+            MessageDispatcher = new ClientDispatcher();
             try
             {
                 switch (protocol)
@@ -41,13 +38,10 @@ namespace Model
                     case NetworkProtocol.TCP:
                         this.Service = new TService();
                         break;
-                    default:
-                        throw new ArgumentOutOfRangeException();
+                    //case NetworkProtocol.WebSocket:
+                    //    this.Service = new WService();
+                    //    break;
                 }
-
-                this.Service.AcceptCallback += this.OnAccept;
-
-                this.StartAccept();
             }
             catch (Exception e)
             {
@@ -55,30 +49,32 @@ namespace Model
             }
         }
 
-        public void Initialize(NetworkProtocol protocol, IPEndPoint ipEndPoint)
+        public void Initialize(NetworkProtocol protocol, string address)
         {
-            _Protocal = protocol;
+            //MessagePacker = new ProtobufPacker();
+            //MessageDispatcher = new ClientDispatcher();
             try
             {
+                IPEndPoint ipEndPoint;
                 switch (protocol)
                 {
                     case NetworkProtocol.KCP:
-                        this.Service = new KService(ipEndPoint);
+                        ipEndPoint = NetworkHelper.ToIPEndPoint(address);
+                        this.Service = new KService(ipEndPoint, this.OnAccept);
                         break;
                     case NetworkProtocol.TCP:
-                        this.Service = new TService(ipEndPoint);
+                        ipEndPoint = NetworkHelper.ToIPEndPoint(address);
+                        this.Service = new TService(ipEndPoint, this.OnAccept);
                         break;
-                    default:
-                        throw new ArgumentOutOfRangeException();
+                    //case NetworkProtocol.WebSocket:
+                    //    string[] prefixs = address.Split(';');
+                    //    this.Service = new WService(prefixs, this.OnAccept);
+                    //    break;
                 }
-
-                this.Service.AcceptCallback += this.OnAccept;
-
-                this.StartAccept();
             }
             catch (Exception e)
             {
-                throw new Exception($"{ipEndPoint}", e);
+                throw new Exception($"NetworkComponent Awake Error {address}", e);
             }
         }
 
@@ -96,6 +92,7 @@ namespace Model
         {
             Session session = new Session(this, channel);
             this.sessions.Add(session.Id, session);
+            //session.Start();
         }
 
         public virtual void Remove(long id)
@@ -125,6 +122,15 @@ namespace Model
             AChannel channel = this.Service.ConnectChannel(ipEndPoint);
             Session session = new Session(this, channel);
             this.sessions.Add(session.Id, session);
+            session.Start();
+            return session;
+        }
+        public Session Create(string address)
+        {
+            AChannel channel = this.Service.ConnectChannel(address);
+            Session session = new Session(this, channel);
+            this.sessions.Add(session.Id, session);
+            session.Start();
             return session;
         }
 
@@ -137,7 +143,7 @@ namespace Model
             this.Service.Update();
         }
 
-        public void Dispose()
+        public  void Dispose()
         {
             foreach (Session session in this.sessions.Values.ToArray())
             {
