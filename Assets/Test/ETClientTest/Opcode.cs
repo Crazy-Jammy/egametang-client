@@ -88,4 +88,10 @@
     [Message((ushort)Opcode.G2C_LoginGate)]
     public partial class G2C_LoginGate : IResponse { }
 
+    [Message((ushort)Opcode.C2G_EnterMap)]
+    public partial class C2G_EnterMap : IRequest { }
+
+    [Message((ushort)Opcode.G2C_EnterMap)]
+    public partial class G2C_EnterMap : IResponse { }
+
 }

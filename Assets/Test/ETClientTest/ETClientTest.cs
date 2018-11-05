@@ -43,7 +43,7 @@ namespace Test
                 gateSession = NetworkClient.Instance.Create(r2CLogin.Address);
                 G2C_LoginGate g2CLoginGate = (G2C_LoginGate)await gateSession.Call(new C2G_LoginGate() { Key = r2CLogin.Key });
 
-                Debug.LogError("登陆gate成功!");
+                Debug.LogError($"登陆gate成功!{r2CLogin.Address}");
                 Debug.LogError(g2CLoginGate.PlayerId.ToString());
             }
             catch (Exception e)

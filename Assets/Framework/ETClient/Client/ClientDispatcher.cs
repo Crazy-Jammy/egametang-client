@@ -1,4 +1,5 @@
 ﻿using System;
+using UnityEngine;
 
 namespace Model
 {
@@ -14,13 +15,14 @@ namespace Model
             //	return;
             //}
 
-            //// 普通消息或者是Rpc请求消息
-            //if (message is AMessage || message is ARequest)
-            //{
-            //	MessageInfo messageInfo = new MessageInfo(opcode, message);
-            //	Game.Scene.GetComponent<MessageDispatherComponent>().Handle(session, messageInfo);
-            //	return;
-            //}
+            // 普通消息或者是Rpc请求消息
+            if (message is IMessage )
+            {
+                MessageInfo messageInfo = new MessageInfo(opcode, (IMessage)message);
+                Debug.Log(messageInfo);
+                //.Handle(session, messageInfo);
+                return;
+            }
 
             //throw new Exception($"message type error: {message.GetType().FullName}");
 
