@@ -1,6 +1,6 @@
 # egametang-client
 
-ET4.0 server + client （没有ILRT热更新，没有ECS模式。方便兼容其他客户端，不限制死使用方式 ）
+ET4.0 server + client （纯净客户端 ）
 
 原始地址
 https://github.com/egametang/ET
